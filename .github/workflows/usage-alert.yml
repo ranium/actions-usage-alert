@@ -1,0 +1,54 @@
+name: Actions usage alert
+
+on:
+  schedule:
+    - cron: "17 2,14 * * *" # twice a day (UTC)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: compute and log totals, send and record nothing"
+        type: boolean
+        default: false
+      test_alert:
+        description: "Send a [TEST] alert now, ignoring thresholds (not recorded)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write   # record alerts as issues
+  actions: write  # keep the schedule from being auto-disabled
+
+concurrency:
+  group: usage-alert
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check usage and alert
+        env:
+          ORG: ${{ vars.ORG || github.repository_owner }}
+          THRESHOLD: ${{ vars.ALERT_THRESHOLD_MINUTES || '1000' }}
+          THRESHOLD_HIGH: ${{ vars.ALERT_THRESHOLD_MINUTES_HIGH }}
+          INCLUDED_MINUTES: ${{ vars.INCLUDED_MINUTES || '2000' }}
+          EMAIL_TO: ${{ vars.EMAIL_TO }}
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          TEST_ALERT: ${{ inputs.test_alert || 'false' }}
+          BILLING_TOKEN: ${{ secrets.BILLING_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash ./check-usage.sh
+
+      # GitHub disables scheduled workflows after 60 days without repo activity.
+      - name: Keep schedule enabled
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/usage-alert.yml/enable" --silent
